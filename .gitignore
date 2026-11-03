@@ -1,0 +1,32 @@
+# Data files — too large for a repository
+*.csv
+*.ld
+*.ldx
+*.mat
+*.bin
+*.ibt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+
+# FastF1 cache
+f1_cache/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Local settings
+.env
+*.local

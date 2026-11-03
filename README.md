@@ -61,6 +61,5 @@ race-engineering-portfolio/
 
 ## Contact
 
-- GitHub: `@your-handle`
+- GitHub: [@zeron-race-eng](https://github.com/zeron-race-eng)
 - LinkedIn: `your-linkedin`
-- Email: `your-email`

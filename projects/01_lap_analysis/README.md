@@ -108,6 +108,9 @@ A delta that oscillates with the same period as the lap is almost always a synch
 
 ## How to run
 
+On Windows you can double-click `run_analysis.bat` — it changes into the script
+folder and runs the analysis, so the working directory does not matter.
+
 ```bash
 pip install -r requirements.txt
 

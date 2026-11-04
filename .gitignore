@@ -30,3 +30,6 @@ desktop.ini
 # Local settings
 .env
 *.local
+
+# keep small result tables, ignore raw logs
+!projects/*/docs/**/*.csv

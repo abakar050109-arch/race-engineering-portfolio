@@ -24,7 +24,7 @@ This repository is a working portfolio, not a showcase. Everything here is built
 
 | # | Project | Focus | Status |
 |---|---------|-------|--------|
-| 01 | Lap detection & telemetry baseline | Slicing a session into laps, speed / throttle / brake traces | 🚧 in progress |
+| 01 | [Lap detection & telemetry baseline](projects/01_lap_analysis) | Slicing a session into laps, speed / throttle / brake traces | ✅ done |
 | 02 | Time delta analysis | Where time is gained and lost against a reference lap | ⏳ planned |
 | 03 | Braking analysis | Brake points, release, trail braking | ⏳ planned |
 | 04 | Tyre analysis | Temperatures, pressures, degradation across a stint | ⏳ planned |

@@ -108,8 +108,15 @@ A delta that oscillates with the same period as the lap is almost always a synch
 
 ## How to run
 
-On Windows you can double-click `run_analysis.bat` — it changes into the script
-folder and runs the analysis, so the working directory does not matter.
+On Windows there is no need for a terminal:
+
+| File | What happens |
+|------|--------------|
+| `run_analysis.bat` | console window, progress and summary, then the results folder opens |
+| `run_silent.vbs` | no window at all; the analysis runs in the background and the results folder opens |
+
+Both launchers call Python 3.11 explicitly, because plain `python` can resolve to the
+Microsoft Store stub, which exits successfully without doing anything.
 
 ```bash
 pip install -r requirements.txt

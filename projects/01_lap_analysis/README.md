@@ -54,6 +54,27 @@ Best lap: **137.51 s** (154.2 km/h average), 5 complete laps found.
 
 ![Best lap, Silverstone](docs/silverstone/best_lap.png)
 
+## Track map
+
+The log has no GPS and no X/Y position, so the circuit is rebuilt from the lateral
+acceleration channel:
+
+- curvature `kappa = a_lat / v²`;
+- integrating curvature over distance gives the heading;
+- integrating the heading gives x and y.
+
+![Track map, Red Bull Ring](docs/red_bull_ring/track_map.png)
+
+Integrating a quantised channel always drifts, so the loop is closed in two steps:
+the heading is scaled to exactly one full turn, and the remaining position gap is
+spread evenly over the lap. The gap before correction is printed in the plot title:
+**208 m on a 4318 m lap (4.8 %)**.
+
+The outline is recognisable and the speed colouring follows the expected pattern —
+top speed at the end of the straights, minimum speed in the slow corners. On longer
+laps the drift grows: the Silverstone reconstruction closes with 6.9 % error and its
+shape is noticeably stretched.
+
 ## Key finding
 
 Lap 6 is the best lap of the Red Bull Ring session. Comparing it with lap 10 — only **0.36 s** slower overall — shows that the two laps are far from identical:
@@ -83,6 +104,7 @@ A delta that oscillates with the same period as the lap is almost always a synch
 - Alignment by speed profile assumes the two laps are driven on a similar line. With traffic or a big off-track, the offset can be wrong.
 - The delta is normalised to 0 at the start and to the real lap difference at the end. The shape in between is correct; the absolute offset depends on that normalisation.
 - Throttle and brake are plotted raw, without smoothing: the steps are the signal, not noise.
+- The track map is rebuilt from a quantised lateral acceleration channel, not from a position log. The loop is closed artificially, so the outline is representative rather than exact.
 
 ## How to run
 

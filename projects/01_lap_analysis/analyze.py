@@ -30,6 +30,7 @@ import pandas as pd
 
 matplotlib.use("Agg")  # write figures to files; no display required
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 
 
 # Track lengths in metres. Required because a lap is a distance, not a duration:
@@ -204,6 +205,83 @@ def align_by_speed(
     return best_shift, best_error
 
 
+def reconstruct_track(
+    df: pd.DataFrame, lap: pd.Series, g_to_ms2: float = 9.81
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Rebuild the circuit outline from lateral acceleration.
+
+    The log has no GPS and no X/Y position, so the geometry has to be derived.
+    Curvature follows from the lateral acceleration: ``kappa = a_lat / v^2``.
+    Integrating curvature over distance gives the heading; integrating heading
+    gives x and y.
+
+    The result drifts, so the loop is closed in two steps: the heading is scaled
+    to exactly one full turn, and the remaining position gap is spread evenly
+    over the lap. The shape is representative, not survey-accurate.
+    """
+    segment = df.iloc[int(lap["start_idx"]) : int(lap["end_idx"]) + 1]
+    if "G_LAT" not in segment.columns:
+        raise ValueError("channel G_LAT is missing - cannot rebuild the track")
+
+    v = segment["SPEED"].to_numpy()
+    dt = np.diff(segment["time_s"].to_numpy(), prepend=segment["time_s"].iloc[0])
+    ds = v * dt
+    a_lat = segment["G_LAT"].to_numpy()
+
+    # G_LAT comes in g, not m/s^2. Clipping removes kerb strikes and glitches.
+    kappa = np.clip(a_lat * g_to_ms2 / np.maximum(v, 5.0) ** 2, -0.25, 0.25)
+    dtheta = kappa * ds
+
+    total = float(dtheta.sum())
+    if abs(total) < 1e-6:
+        raise ValueError("no net rotation detected - check the G_LAT sign")
+    dtheta *= (2.0 * np.pi * np.sign(total)) / total
+
+    theta = np.cumsum(dtheta)
+    x = np.cumsum(np.cos(theta) * ds)
+    y = np.cumsum(np.sin(theta) * ds)
+
+    # How far apart the two ends are before correction: a quality indicator.
+    gap_m = float(np.hypot(x[-1], y[-1]))
+
+    # Spread the residual gap over the lap so the outline closes.
+    x -= np.linspace(0.0, x[-1], len(x))
+    y -= np.linspace(0.0, y[-1], len(y))
+    return x, y, v * 3.6, gap_m
+
+
+def plot_track_map(
+    df: pd.DataFrame, lap: pd.Series, out_path: Path, meta: dict[str, str]
+) -> None:
+    x, y, speed, gap_m = reconstruct_track(df, lap)
+
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+    fig, ax = plt.subplots(figsize=(8.5, 8.5))
+    line = LineCollection(segments, cmap="viridis", linewidth=3)
+    line.set_array(speed[:-1])
+    ax.add_collection(line)
+    ax.autoscale()
+    ax.set_aspect("equal")
+
+    ax.plot(x[0], y[0], "o", color="#d62728", markersize=9, label="start / finish")
+    fig.colorbar(line, ax=ax, label="Speed (km/h)")
+
+    ax.set_title(
+        f"{meta.get('venue', 'unknown track')} · lap {int(lap['lap'])} · "
+        f"track rebuilt from G_LAT (closure gap {gap_m:.0f} m)"
+    )
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="upper right")
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def plot_single_lap(df: pd.DataFrame, lap: pd.Series, out_path: Path, meta: dict[str, str]) -> None:
     segment = df.iloc[int(lap["start_idx"]) : int(lap["end_idx"]) + 1]
     distance = segment["distance_m"].to_numpy() - segment["distance_m"].iloc[0]
@@ -332,6 +410,12 @@ def analyze_file(path: Path, out_root: Path) -> dict:
     best = laps.loc[laps["lap_time_s"].idxmin()]
     print(f"  best lap: {int(best['lap'])} - {best['lap_time_s']:.2f} s")
     plot_single_lap(df, best, out_dir / "best_lap.png", meta)
+
+    try:
+        plot_track_map(df, best, out_dir / "track_map.png", meta)
+        print("  track map: track_map.png")
+    except Exception as exc:  # noqa: BLE001 - the map is optional
+        print(f"  track map skipped: {exc}")
 
     summary = {
         "file": path.name,

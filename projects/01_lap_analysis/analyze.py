@@ -1,32 +1,39 @@
 """
 Lap analysis for MoTeC CSV logs recorded in Assetto Corsa Competizione.
 
-What this script does:
-    1. reads a raw MoTeC CSV export (200 Hz, quoted header, metadata lines on top);
-    2. rebuilds the distance travelled from the speed channel;
-    3. slices the session into laps by distance;
-    4. saves a lap table, a speed/throttle/brake plot and an aligned delta plot.
+Pipeline
+--------
+1. Read a MoTeC CSV export (200 Hz, quoted header, metadata block on top).
+2. Rebuild the distance travelled from the speed channel.
+3. Slice the session into laps by distance, not by time.
+4. Write a lap table, a speed/throttle/brake plot and an aligned delta plot.
 
-Usage:
-    python analyze.py --data data.csv --out docs
-    python analyze.py --data data.csv --track-length 4318 --no-compare
+Usage
+-----
+    python analyze.py                          # every CSV in ./data
+    python analyze.py --data a.csv b.csv       # explicit files
+    python analyze.py --data logs/             # every CSV in a folder
+    python analyze.py --track-length 4318      # override track length
+
+Output goes to ./docs/<venue>/.
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
 import numpy as np
 import pandas as pd
 
-matplotlib.use("Agg")  # рисуем в файл, без окна — иначе в терминале и на сервере падает
+matplotlib.use("Agg")  # write figures to files; no display required
 import matplotlib.pyplot as plt
 
 
-# Длины трасс в метрах. Нужны, чтобы резать сессию на круги по дистанции,
-# а не по времени: круг — это участок длиной ровно в трассу, а не «75 секунд».
+# Track lengths in metres. Required because a lap is a distance, not a duration:
+# without a length there is no way to tell where one lap ends and the next begins.
 TRACK_LENGTHS_M = {
     "red_bull_ring": 4318.0,
     "silverstone": 5891.0,
@@ -52,7 +59,12 @@ TRACK_LENGTHS_M = {
 
 
 def read_motec_csv(path: Path) -> tuple[pd.DataFrame, dict[str, str]]:
-    """Читает CSV MoTeC. Шапка ищется по строке с колонкой Time, а не по номеру строки."""
+    """Read a MoTeC CSV.
+
+    The header row is located by content (the row whose first field is ``Time``)
+    rather than by a hardcoded line number, so a different export layout does not
+    silently shift every column.
+    """
     raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
 
     header_index = None
@@ -62,7 +74,7 @@ def read_motec_csv(path: Path) -> tuple[pd.DataFrame, dict[str, str]]:
             header_index = i
             break
     if header_index is None:
-        raise ValueError(f"Не нашёл строку заголовка (колонку Time) в {path.name}")
+        raise ValueError("no header row found (no 'Time' column)")
 
     meta: dict[str, str] = {}
     for line in raw_lines[:header_index]:
@@ -70,13 +82,7 @@ def read_motec_csv(path: Path) -> tuple[pd.DataFrame, dict[str, str]]:
         if len(parts) >= 2 and parts[0]:
             meta[parts[0].lower()] = parts[1]
 
-    df = pd.read_csv(
-        path,
-        skiprows=header_index,
-        sep=",",
-        on_bad_lines="skip",
-        engine="python",
-    )
+    df = pd.read_csv(path, skiprows=header_index, sep=",", on_bad_lines="skip", engine="python")
 
     df.columns = [str(c).replace('"', "").strip() for c in df.columns]
     for col in df.columns:
@@ -84,17 +90,18 @@ def read_motec_csv(path: Path) -> tuple[pd.DataFrame, dict[str, str]]:
 
     df = df.dropna(subset=["Time"]).reset_index(drop=True)
     if df.empty:
-        raise ValueError(f"После очистки не осталось данных: {path.name}")
+        raise ValueError("no usable rows after cleaning")
 
     return df, meta
 
 
 def prepare(df: pd.DataFrame) -> pd.DataFrame:
-    """Считает время от нуля, дистанцию и переводит скорость в км/ч."""
+    """Add relative time, distance and km/h speed."""
     out = df.copy()
     out["time_s"] = out["Time"] - out["Time"].iloc[0]
 
-    # Пустые ячейки ломают интегрирование: одна NaN делает всю дистанцию NaN.
+    # A single empty cell would turn the whole cumulative distance into NaN,
+    # so the three channels used downstream are repaired first.
     for col in ("SPEED", "THROTTLE", "BRAKE"):
         out[col] = out[col].interpolate().ffill().bfill()
 
@@ -105,13 +112,16 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def find_laps(df: pd.DataFrame, track_length_m: float) -> pd.DataFrame:
-    """Режет сессию на отрезки длиной в круг. Остаток в конце отбрасывается."""
+    """Split the session into segments of exactly one track length.
+
+    Any trailing partial segment is dropped.
+    """
     total_distance = float(df["distance_m"].iloc[-1])
     full_laps = int(total_distance // track_length_m)
     if full_laps < 1:
         raise ValueError(
-            f"Пройдено {total_distance / 1000:.2f} км — этого мало на один круг "
-            f"({track_length_m / 1000:.2f} км). Проверь длину трассы."
+            f"only {total_distance / 1000:.2f} km driven - not enough for one lap "
+            f"({track_length_m / 1000:.2f} km); check --track-length"
         )
 
     bounds = [
@@ -148,16 +158,15 @@ def find_laps(df: pd.DataFrame, track_length_m: float) -> pd.DataFrame:
 def lap_profiles(
     df: pd.DataFrame, lap: pd.Series, track_length_m: float, n: int = 2000
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Возвращает сетку дистанции, время и скорость круга — всё на общей сетке."""
-    # lap — это строка Series со смешанными типами, поэтому pandas отдаёт индексы
-    # как float. Приводим обратно к int, иначе iloc ругается.
+    """Return distance grid, elapsed time and speed for one lap, on a common grid."""
+    # A row of a mixed-dtype Series comes back with float indices; iloc needs ints.
     segment = df.iloc[int(lap["start_idx"]) : int(lap["end_idx"]) + 1]
 
     distance = segment["distance_m"].to_numpy() - segment["distance_m"].iloc[0]
     time = segment["time_s"].to_numpy() - segment["time_s"].iloc[0]
     speed = segment["speed_kmh"].to_numpy()
 
-    # interp требует строго возрастающий x: убираем повторы.
+    # np.interp requires strictly increasing x, so duplicated distances are dropped.
     unique = np.concatenate([[True], np.diff(distance) > 0])
     distance, time, speed = distance[unique], time[unique], speed[unique]
 
@@ -172,13 +181,16 @@ def align_by_speed(
     max_shift_m: float = 250.0,
     step_m: float = 2.0,
 ) -> tuple[float, float]:
-    """Ищет сдвиг по дистанции, при котором профили скорости совпадают лучше всего.
+    """Find the distance shift that best matches two speed profiles.
 
-    Зачем это нужно. Границы круга считаются по интегрированной дистанции, а она
-    копит ошибку: скорость в логе округлена, поэтому 4300 метров набегают не точно.
-    Из-за этого второй круг может начинаться на 30 метров раньше первого. Если
-    накладывать их как есть, дельта начинает скакать на ±2 секунды в поворотах —
-    это не потеря времени, а ошибка синхронизации.
+    Why this is needed: lap boundaries come from integrated distance, and that
+    integral drifts because the speed channel is rounded. After a few laps, "lap 5"
+    starts tens of metres away from "lap 4". Comparing the raw traces then compares
+    different parts of the track, and the delta oscillates by seconds instead of
+    showing real time loss.
+
+    The search is a plain sweep: try every shift, keep the one with the lowest RMS
+    difference between the two speed profiles.
     """
     best_shift, best_error = 0.0, float("inf")
     for shift in np.arange(-max_shift_m, max_shift_m + step_m, step_m):
@@ -192,7 +204,7 @@ def align_by_speed(
     return best_shift, best_error
 
 
-def plot_single_lap(df, lap, out_path, meta):
+def plot_single_lap(df: pd.DataFrame, lap: pd.Series, out_path: Path, meta: dict[str, str]) -> None:
     segment = df.iloc[int(lap["start_idx"]) : int(lap["end_idx"]) + 1]
     distance = segment["distance_m"].to_numpy() - segment["distance_m"].iloc[0]
 
@@ -207,7 +219,7 @@ def plot_single_lap(df, lap, out_path, meta):
     axes[0].grid(alpha=0.3)
     axes[0].legend(loc="upper right")
 
-    # Тормоз не сглаживаем: ступеньки — это и есть смысл канала.
+    # Brake is drawn raw: the steps are the signal, not noise.
     axes[1].fill_between(distance, 0, segment["BRAKE"], color="#d62728", alpha=0.45, label="Brake (%)")
     axes[1].plot(distance, segment["THROTTLE"], color="#2ca02c", linewidth=1.2, label="Throttle (%)")
     axes[1].set_ylabel("Pedal (%)")
@@ -221,7 +233,14 @@ def plot_single_lap(df, lap, out_path, meta):
     plt.close(fig)
 
 
-def plot_compare(df, reference, compared, track_length_m, out_path, meta):
+def plot_compare(
+    df: pd.DataFrame,
+    reference: pd.Series,
+    compared: pd.Series,
+    track_length_m: float,
+    out_path: Path,
+    meta: dict[str, str],
+) -> tuple[np.ndarray, float, float]:
     grid, t_ref, v_ref = lap_profiles(df, reference, track_length_m)
     _, t_cmp, v_cmp = lap_profiles(df, compared, track_length_m)
 
@@ -229,12 +248,12 @@ def plot_compare(df, reference, compared, track_length_m, out_path, meta):
 
     v_cmp_aligned = np.interp(grid + shift, grid, v_cmp, left=np.nan, right=np.nan)
     t_cmp_aligned = np.interp(grid + shift, grid, t_cmp, left=np.nan, right=np.nan)
-    delta_raw = t_cmp_aligned - t_ref  # > 0 — сравниваемый круг медленнее
+    delta_raw = t_cmp_aligned - t_ref  # > 0 means the compared lap is slower
 
-    # После сдвига дельта перестаёт начинаться с нуля: сравниваемые участки
-    # стартуют в разных точках трассы. Нормируем её так, чтобы в начале было 0,
-    # а в конце — реальная разница времён кругов. Коррекция линейная, поэтому
-    # форма кривой (где именно теряется время) не меняется.
+    # After shifting, the delta no longer starts at zero, because the compared
+    # segments begin at different points on the track. Normalise it so it starts at
+    # 0 and ends at the real lap difference. The correction is linear, so the shape
+    # of the curve - where time is actually lost - is preserved.
     total_diff = float(compared["lap_time_s"] - reference["lap_time_s"])
     valid_idx = np.flatnonzero(~np.isnan(delta_raw))
     i0, i1 = int(valid_idx[0]), int(valid_idx[-1])
@@ -285,60 +304,122 @@ def plot_compare(df, reference, compared, track_length_m, out_path, meta):
     return delta, shift, rms
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Lap analysis for MoTeC CSV logs")
-    parser.add_argument("--data", required=True, type=Path, help="path to the MoTeC CSV file")
-    parser.add_argument("--out", default=Path("docs"), type=Path, help="output folder")
-    parser.add_argument("--track-length", type=float, default=None, help="track length in metres")
-    parser.add_argument("--no-compare", action="store_true", help="skip the delta plot")
-    args = parser.parse_args()
-
-    if not args.data.exists():
-        print(f"[error] file not found: {args.data}")
-        return 1
-
-    print(f"[1/4] reading {args.data.name} ...")
-    raw, meta = read_motec_csv(args.data)
+def analyze_file(path: Path, out_root: Path) -> dict:
+    """Analyse one log and return a one-row summary."""
+    raw, meta = read_motec_csv(path)
     df = prepare(raw)
 
     venue = meta.get("venue", "").strip().lower()
-    track_length = args.track_length or TRACK_LENGTHS_M.get(venue)
+    track_length = TRACK_LENGTHS_M.get(venue)
     if track_length is None:
-        print(f"[error] unknown track '{venue}'. Pass --track-length explicitly.")
-        return 1
+        raise ValueError(f"unknown track '{venue}' - add it to TRACK_LENGTHS_M or pass --track-length")
 
-    duration = float(df["time_s"].iloc[-1])
-    distance_km = float(df["distance_m"].iloc[-1]) / 1000
-    print(f"      venue={venue or 'unknown'}  track={track_length:.0f} m")
-    print(f"      duration={duration:.1f} s  distance={distance_km:.2f} km  samples={len(df)}")
+    print(f"  track:  {venue} ({track_length:.0f} m)")
+    print(f"  length: {df['time_s'].iloc[-1]:.1f} s   distance: {df['distance_m'].iloc[-1] / 1000:.2f} km"
+          f"   samples: {len(df)}")
 
-    print("[2/4] slicing laps by distance ...")
     laps = find_laps(df, track_length)
     if laps.empty:
-        print("[error] no complete laps found")
-        return 1
+        raise ValueError("no complete laps found")
 
-    args.out.mkdir(parents=True, exist_ok=True)
-    laps.to_csv(args.out / "laps.csv", index=False)
+    out_dir = out_root / (venue or path.stem)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    laps.to_csv(out_dir / "laps.csv", index=False)
 
     display = laps[["lap", "lap_time_s", "avg_speed_kmh", "max_speed_kmh", "full_throttle_pct", "braking_pct"]]
     print(display.to_string(index=False, float_format=lambda x: f"{x:.2f}"))
 
     best = laps.loc[laps["lap_time_s"].idxmin()]
-    print(f"[3/4] best lap: {int(best['lap'])} - {best['lap_time_s']:.2f} s ({best['avg_speed_kmh']:.1f} km/h avg)")
-    plot_single_lap(df, best, args.out / "best_lap.png", meta)
+    print(f"  best lap: {int(best['lap'])} - {best['lap_time_s']:.2f} s")
+    plot_single_lap(df, best, out_dir / "best_lap.png", meta)
 
-    if not args.no_compare and len(laps) >= 2:
+    summary = {
+        "file": path.name,
+        "venue": venue,
+        "laps": len(laps),
+        "best_lap_s": float(best["lap_time_s"]),
+        "best_lap_number": int(best["lap"]),
+    }
+
+    if len(laps) >= 2:
         others = laps[laps["lap"] != best["lap"]]
         compared = others.loc[others["lap_time_s"].idxmin()]
-        delta, shift, rms = plot_compare(df, best, compared, track_length, args.out / "delta.png", meta)
-        print(f"[4/4] delta vs lap {int(compared['lap'])}: aligned by {shift:+.0f} m (RMS {rms:.1f} km/h)")
-        print(f"      worst loss {np.nanmax(delta):+.3f} s, biggest gain {np.nanmin(delta):+.3f} s")
-        print(f"      total difference: {compared['lap_time_s'] - best['lap_time_s']:+.3f} s")
-    else:
-        print("[4/4] comparison skipped")
+        delta, shift, rms = plot_compare(df, best, compared, track_length, out_dir / "delta.png", meta)
+        print(f"  delta vs lap {int(compared['lap'])}: shifted {shift:+.0f} m (RMS {rms:.1f} km/h)")
+        print(f"  worst loss {np.nanmax(delta):+.3f} s, biggest gain {np.nanmin(delta):+.3f} s")
+        summary["delta_vs_lap"] = int(compared["lap"])
+        summary["total_diff_s"] = float(compared["lap_time_s"] - best["lap_time_s"])
 
-    print(f"[done] results saved to {args.out.resolve()}")
+    print(f"  saved: {out_dir}")
+    return summary
+
+
+def collect_inputs(values: list[str] | None, script_dir: Path) -> list[Path]:
+    """Expand CLI values (files or folders) into a list of CSV files.
+
+    With no arguments, every CSV in ./data next to this script is used.
+    """
+    if not values:
+        data_dir = script_dir / "data"
+        return sorted(data_dir.glob("*.csv")) if data_dir.is_dir() else []
+
+    files: list[Path] = []
+    for value in values:
+        path = Path(value)
+        if path.is_dir():
+            files.extend(sorted(path.glob("*.csv")))
+        else:
+            files.append(path)
+    return files
+
+
+def main() -> int:
+    # The Windows console is not UTF-8 by default and would raise
+    # UnicodeEncodeError on the first non-ASCII character printed.
+    if sys.platform == "win32":
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+    parser = argparse.ArgumentParser(description="Lap analysis for MoTeC CSV logs (ACC)")
+    parser.add_argument("--data", nargs="*", default=None,
+                        help="CSV files or folders; default: every CSV in ./data")
+    parser.add_argument("--out", default=None, help="output folder; default: ./docs")
+    parser.add_argument("--track-length", type=float, default=None,
+                        help="track length in metres, overrides the venue lookup")
+    parser.add_argument("--no-compare", action="store_true", help="skip the delta plot")
+    args = parser.parse_args()
+
+    script_dir = Path(__file__).resolve().parent
+    out_root = Path(args.out) if args.out else script_dir / "docs"
+
+    files = collect_inputs(args.data, script_dir)
+    existing = [f for f in files if f.exists()]
+
+    if not existing:
+        print("No CSV files found.")
+        print("Put MoTeC exports into ./data next to this script, or pass paths explicitly:")
+        print("    python analyze.py --data path/to/log.csv")
+        return 1
+    for f in files:
+        if not f.exists():
+            print(f"[skip] not found: {f}")
+
+    summaries = []
+    for i, path in enumerate(existing, start=1):
+        print(f"\n[{i}/{len(existing)}] {path.name}")
+        try:
+            summaries.append(analyze_file(path, out_root))
+        except Exception as exc:  # noqa: BLE001 - one broken log should not stop the batch
+            print(f"  [error] {exc}")
+
+    if len(summaries) > 1:
+        print("\n=== SUMMARY ===")
+        header = f"{'file':<14} {'track':<16} {'laps':>6} {'best':>9} {'lap #':>6}"
+        print(header)
+        print("-" * len(header))
+        for s in summaries:
+            print(f"{s['file']:<14} {s['venue']:<16} {s['laps']:>6} {s['best_lap_s']:>9.2f} {s['best_lap_number']:>6}")
+
+    print(f"\nDone. Results in: {out_root.resolve()}")
     return 0
 
 

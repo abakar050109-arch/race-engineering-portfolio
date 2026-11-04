@@ -24,13 +24,22 @@ import argparse
 import sys
 from pathlib import Path
 
-import matplotlib
-import numpy as np
-import pandas as pd
+try:
+    import matplotlib
+    import numpy as np
+    import pandas as pd
+    from matplotlib.collections import LineCollection
+except ModuleNotFoundError as exc:  # a wrong interpreter is the usual cause
+    raise SystemExit(
+        f"\nMissing package: {exc.name}\n"
+        f"Interpreter in use: {sys.executable}\n\n"
+        f"Either install the requirements:\n"
+        f'    "{sys.executable}" -m pip install -r requirements.txt\n\n'
+        f"or switch to an interpreter that already has them.\n"
+    )
 
 matplotlib.use("Agg")  # write figures to files; no display required
 import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
 
 
 # Track lengths in metres. Required because a lap is a distance, not a duration:

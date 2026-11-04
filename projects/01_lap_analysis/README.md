@@ -88,19 +88,27 @@ A delta that oscillates with the same period as the lap is almost always a synch
 
 ```bash
 pip install -r requirements.txt
-python analyze.py --data path/to/data.csv --out docs
+
+# every CSV in ./data
+python analyze.py
+
+# explicit files or folders
+python analyze.py --data data/data.csv data/data1.csv
+python analyze.py --data logs/
 ```
 
-Options:
+| Flag | Meaning | Default |
+|------|---------|---------|
+| `--data` | CSV files or folders | every CSV in `./data` |
+| `--out` | output folder | `docs` |
+| `--track-length` | override the track length in metres | read from the `Venue` field |
+| `--no-compare` | skip the delta plot | off |
 
-| Flag | Meaning |
-|------|---------|
-| `--data` | path to the MoTeC CSV (required) |
-| `--out` | output folder, default `docs` |
-| `--track-length` | override the track length in metres |
-| `--no-compare` | skip the delta plot |
+Each session writes `laps.csv`, `best_lap.png` and `delta.png` into `docs/<venue>/`.
 
-Output: `laps.csv`, `best_lap.png`, `delta.png`.
+Raw logs are **not stored in this repository**: `data/*.csv` is ignored by git.
+Put your own MoTeC exports into `data/` — the expected format is described in
+[`data/README.md`](data/README.md).
 
 ## What I learned
 

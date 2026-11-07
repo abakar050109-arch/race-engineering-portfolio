@@ -33,3 +33,6 @@ desktop.ini
 
 # keep small result tables, ignore raw logs
 !projects/*/docs/**/*.csv
+
+# local publishing helper
+publish_to_github.ps1

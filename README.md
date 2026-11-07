@@ -61,5 +61,5 @@ race-engineering-portfolio/
 
 ## Contact
 
-- GitHub: [@zeron-race-eng](https://github.com/zeron-race-eng)
-- LinkedIn: `your-linkedin`
+- GitHub: [@abakar050109-arch](https://github.com/abakar050109-arch)
+- Repository: [race-engineering-portfolio](https://github.com/abakar050109-arch/race-engineering-portfolio)

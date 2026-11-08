@@ -1,8 +1,9 @@
-"""Project 02, step 7: lap 1, where Hamilton attacked and Verstappen defended.
+"""Project 02, step 7 (v2): lap 1 - Hamilton attacking, Verstappen defending.
 
-Both cars start from the grid, so their telemetry distance starts at zero at
-different physical points (the grid slots). To compare them we align by track
-position: Verstappen started roughly one grid slot (about 8 m) ahead.
+Method: both cars are tracked along the reference racing line. Lap 1 starts on
+the grid, i.e. *behind* the start/finish line, so the first samples map to the
+end of the lap; those are shifted negative to keep the sequence continuous.
+The pass is the instant the two positions swap.
 """
 
 import os
@@ -17,6 +18,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import fastf1
 
 HERE = Path(__file__).resolve().parent
@@ -24,8 +26,6 @@ CACHE = str(HERE / "f1_cache")
 OUT = HERE / "docs"
 OUT.mkdir(exist_ok=True)
 fastf1.Cache.configure(cache_dir=CACHE)
-
-GRID_OFFSET = 8.0
 
 
 def fmt(td):
@@ -39,69 +39,89 @@ def lap1(session, driver):
     return sel.iloc[0]
 
 
+def track_along(tel, ref_xy, ref_dist, back=8, fwd=30):
+    """Follow the reference line with a moving window, wrapping at the ends."""
+    pts = np.column_stack([tel["X"].to_numpy(dtype=float), tel["Y"].to_numpy(dtype=float)])
+    n = len(ref_xy)
+
+    d0 = np.hypot(ref_xy[:, 0] - pts[0, 0], ref_xy[:, 1] - pts[0, 1])
+    prev = int(np.argmin(d0))
+
+    along = np.empty(len(pts))
+    for i, p in enumerate(pts):
+        idx = (prev + np.arange(-back, fwd)) % n
+        dist = np.hypot(ref_xy[idx, 0] - p[0], ref_xy[idx, 1] - p[1])
+        k = int(idx[int(np.argmin(dist))])
+        along[i] = ref_dist[k]
+        prev = k
+    return along
+
+
 s = fastf1.get_session(2021, "Abu Dhabi", "R")
 s.load(telemetry=True, messages=False, weather=False)
 
-data = {}
+ref = s.laps.pick_drivers("HAM").pick_fastest()
+ref_tel = ref.get_telemetry()
+ref_xy = np.column_stack([ref_tel["X"].to_numpy(dtype=float),
+                          ref_tel["Y"].to_numpy(dtype=float)])
+ref_dist = ref_tel["Distance"].to_numpy(dtype=float)
+L = float(ref_dist.max())
+
+series = {}
 for drv in ("HAM", "VER"):
     lap = lap1(s, drv)
     tel = lap.get_telemetry()
-    d = tel["Distance"].to_numpy(dtype=float)
-    t = (tel["SessionTime"] - tel["SessionTime"].iloc[0]).dt.total_seconds().to_numpy()
-    keep = np.concatenate([[True], np.diff(d) > 0])
-    data[drv] = {
-        "lap": lap,
-        "d": d[keep],
-        "t": t[keep],
-        "v": tel["Speed"].to_numpy(dtype=float)[keep],
-        "start": tel["SessionTime"].iloc[0],
-    }
-    print(f"{drv}: lap {fmt(lap['LapTime'])}, telemetry start {tel['SessionTime'].iloc[0]}, "
-          f"distance {d[-1]:.0f} m, compound {lap['Compound']}")
+    along = track_along(tel, ref_xy, ref_dist)
 
-start_diff = (data["HAM"]["start"] - data["VER"]["start"]).total_seconds()
-print(f"разница времени старта телеметрии: {start_diff:+.3f} с")
+    first_ahead = np.where(along < L * 0.5)[0]
+    if len(first_ahead) and first_ahead[0] > 0:
+        along[: first_ahead[0]] -= L
 
-grid = np.linspace(GRID_OFFSET, min(data["HAM"]["d"].max(), data["VER"]["d"].max() + GRID_OFFSET) - 5, 3000)
-t_ham = np.interp(grid, data["HAM"]["d"], data["HAM"]["t"])
-t_ver = np.interp(grid - GRID_OFFSET, data["VER"]["d"], data["VER"]["t"])
+    along = pd.Series(along).rolling(7, center=True, min_periods=1).mean().to_numpy()
+    series[drv] = pd.DataFrame({
+        "time": tel["SessionTime"].dt.total_seconds().to_numpy(),
+        "along": along,
+        "speed": tel["Speed"].to_numpy(dtype=float),
+    })
+    print(f"{drv}: lap {fmt(lap['LapTime'])}, {lap['Compound']}, "
+          f"position {along[0]:.0f} .. {along[-1]:.0f} m")
 
-# выравниваем по абсолютному времени: обе телеметрии начинаются на старте
-delta = (t_ham + start_diff) - t_ver
-delta -= np.interp(60.0, grid, delta)   # нормируем на 60-м метре, где оба уже едут
+t0 = max(series["HAM"]["time"].min(), series["VER"]["time"].min())
+t1 = min(series["HAM"]["time"].max(), series["VER"]["time"].max())
+common = np.linspace(t0, t1, 4000)
 
-print(f"\nдельта на 200 м: {np.interp(200, grid, delta):+.3f} с")
-print(f"дельта на 1000 м: {np.interp(1000, grid, delta):+.3f} с")
-print(f"дельта на 2600 м: {np.interp(2600, grid, delta):+.3f} с")
-print(f"дельта на финише: {delta[-1]:+.3f} с (минус = Хэмилтон быстрее)")
+ham = np.interp(common, series["HAM"]["time"], series["HAM"]["along"])
+ver = np.interp(common, series["VER"]["time"], series["VER"]["along"])
+gap = ham - ver
 
-cross = np.where(np.diff(np.sign(delta)) != 0)[0]
-cross = [c for c in cross if grid[c] > 100]
-for c in cross[:5]:
-    print(f"  смена знака: {grid[c]:.0f} м, дельта {delta[c]:+.3f} с")
+print(f"\nat start: HAM {gap[0]:+.1f} m relative to VER")
+cross = np.where(np.diff(np.sign(gap)) != 0)[0]
+cross = [c for c in cross if common[c] > t0 + 2.0]
+for c in cross:
+    print(f"  order change: {common[c] - t0:5.1f} s, at {ham[c] % L:6.0f} m, gap {gap[c]:+6.1f} m")
+print(f"at the end of lap 1: {gap[-1]:+.1f} m (positive = Hamilton ahead)")
 
 fig, axes = plt.subplots(2, 1, figsize=(13, 8), sharex=True)
-axes[0].plot(data["HAM"]["d"], data["HAM"]["v"], linewidth=1.4, label="HAM lap 1")
-axes[0].plot(data["VER"]["d"] + GRID_OFFSET, data["VER"]["v"], linewidth=1.3,
-             linestyle="--", label="VER lap 1 (shifted)")
-axes[0].set_ylabel("Speed (km/h)")
-axes[0].set_title(f"Abu Dhabi 2021 - lap 1 - HAM {fmt(data['HAM']['lap']['LapTime'])} "
-                  f"(MEDIUM) vs VER {fmt(data['VER']['lap']['LapTime'])} (SOFT)")
+axes[0].plot(common - t0, gap, color="#1f77b4", linewidth=1.8)
+axes[0].axhline(0, color="black", linewidth=1.0)
+for c in cross:
+    axes[0].axvline(common[c] - t0, color="#d62728", linestyle="--", linewidth=1.2)
+axes[0].set_ylabel("HAM minus VER (m)")
+axes[0].set_title("Abu Dhabi 2021 - lap 1 - Hamilton attacking, Verstappen defending")
 axes[0].grid(alpha=0.3)
-axes[0].legend(loc="lower right", fontsize=8)
 
-axes[1].axhline(0, color="black", linewidth=0.8)
-axes[1].fill_between(grid, 0, delta, where=delta > 0, color="#d62728", alpha=0.5, label="HAM losing")
-axes[1].fill_between(grid, 0, delta, where=delta < 0, color="#2ca02c", alpha=0.5, label="HAM gaining")
-for c in cross[:5]:
-    axes[1].axvline(grid[c], color="grey", linestyle=":", linewidth=1.0)
-axes[1].set_xlabel("Distance (m)")
-axes[1].set_ylabel("Delta (s)")
+axes[1].plot(series["HAM"]["time"] - t0, series["HAM"]["speed"], linewidth=1.4, label="HAM (MEDIUM)")
+axes[1].plot(series["VER"]["time"] - t0, series["VER"]["speed"], linewidth=1.3,
+             linestyle="--", label="VER (SOFT)")
+for c in cross:
+    axes[1].axvline(common[c] - t0, color="#d62728", linestyle="--", linewidth=1.2)
+axes[1].set_xlabel("Time from the start (s)")
+axes[1].set_ylabel("Speed (km/h)")
 axes[1].grid(alpha=0.3)
-axes[1].legend(loc="upper left", fontsize=8)
+axes[1].legend(loc="lower right", fontsize=8)
 
 fig.tight_layout()
-out = OUT / "lap1_delta.png"
+out = OUT / "lap1_positions.png"
 fig.savefig(out, dpi=150)
 plt.close(fig)
-print(f"\nграфик: {out}")
+print(f"\nchart: {out}")

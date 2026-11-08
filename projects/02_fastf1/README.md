@@ -72,6 +72,21 @@ Same driver, same corner, clean lap (lap 52) versus the final lap:
 | Throttle on | 1506 → 1511 m | 1507 → 1486 m (**−21 m earlier**) |
 | Exit speed | 236 → 228 km/h (−8) | 234 → 234 km/h (unchanged) |
 
+### Lap 1: the mirrored situation
+
+Tracking both cars along the racing line for the opening lap:
+
+| Moment | What happens |
+|---|---|
+| Start | Hamilton is 15.6 m behind (second grid slot) |
+| 3.7 s, ~160 m | The gap is within 1 m — they are side by side into Turn 1 |
+| **42.8 s, ~2610 m** | **The order changes at the second hairpin** |
+| End of lap 1 | Hamilton leads by 56 m |
+
+The pass happened in the hairpin complex at ~2600 m, not on the straight: this
+track rewards the driver who gets the exit of the slow corner, and that is where
+both passes of the race were made.
+
 ### The engineering conclusion
 
 Hamilton defended by braking later and holding the brake 26 metres longer than
@@ -98,9 +113,10 @@ the apex and bought the straight.
   so part of the braking difference is the defensive line, not the tyre.
 - **Corner numbering is ours.** Corners are numbered by distance from the start
   line; the hairpin is corner 4 in this code and Turn 5 officially.
-- **Lap 1 is not resolved.** The standing start, cold tyres and grid offset make
-  the same delta method inconclusive; the curve stays within ±0.01 s around the
-  hairpin. It needs a position-based method.
+- **Lap 1 is approximate.** The gap curve crosses zero several times around the
+  hairpin complex, so the exact metre of the pass is uncertain; what is certain
+  is the corner. The time delta method does not work here at all (standing
+  start, cold tyres, grid offset), which is why lap 1 uses position tracking.
 - **Yas Marina passes close to itself.** A global nearest-point projection jumps
   between parallel pieces of track and produced 10 km "laps" in the first
   attempt. The fix was tracking the position in a moving window.

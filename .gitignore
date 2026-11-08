@@ -36,3 +36,6 @@ desktop.ini
 
 # local publishing helper
 publish_to_github.ps1
+
+# superseded drafts
+_archive/

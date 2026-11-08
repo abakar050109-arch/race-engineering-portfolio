@@ -25,7 +25,7 @@ This repository is a working portfolio, not a showcase. Everything here is built
 | # | Project | Focus | Status |
 |---|---------|-------|--------|
 | 01 | [Lap detection & telemetry baseline](projects/01_lap_analysis) | Slicing a session into laps, speed / throttle / brake traces | ✅ done |
-| 02 | Time delta analysis | Where time is gained and lost against a reference lap | ⏳ planned |
+| 02 | [Attack and defence: Abu Dhabi 2021](projects/02_fastf1) | Brake and throttle under pressure: final lap, hairpin, real F1 data | ✅ done |
 | 03 | Braking analysis | Brake points, release, trail braking | ⏳ planned |
 | 04 | Tyre analysis | Temperatures, pressures, degradation across a stint | ⏳ planned |
 | 05 | Setup comparison | Effect of a setup change on the same car and track | ⏳ planned |

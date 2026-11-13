@@ -22,7 +22,7 @@ The same race contains both roles, mirrored:
 | | |
 |---|---|
 | Session | 2021 Abu Dhabi Grand Prix, Race |
-| Source | FastF1 3.9.0 (official F1 timing data) |
+| Source | FastF1 3.9.2 (official F1 timing data) |
 | Channels | Speed, throttle, brake, gear, X/Y position, `DriverAhead` |
 | Reference lap | Hamilton fastest lap, 1:26.615 |
 
@@ -160,7 +160,7 @@ network.
 | `step4_delta.py` | time delta over the final lap |
 | `step5_overtake.py` | where the order changed |
 | `step6_hairpin.py` | detailed hairpin comparison |
-| `step7_lap1.py` | lap 1, the mirrored situation (inconclusive) |
+| `step7_lap1.py` | lap 1, the mirrored situation |
 | `docs/` | charts |
 
 ## How to run

@@ -102,6 +102,32 @@ In one sentence: the defender spent his tyres and his line on not being
 overtaken into the corner, and had nothing left for the exit; the attacker spent
 the apex and bought the straight.
 
+## Data availability (why this project covers 2021 only)
+
+F1 live timing is no longer open. Without a valid account the CDN answers `403`
+and FastF1 falls back to its community mirror; the mirror holds seasons 2018-2022
+only, so 2023 and later return `404`.
+
+Checked on 13 November 2026 with FastF1 3.9.2 (the latest release, published
+2 November 2026):
+
+| Check | Result |
+|---|---|
+| Sign-in to the F1 account | fails, `404` on `account.formula1.com/scripts/main.min.js` |
+| Official CDN without a token | `403` |
+| Mirror, 2021 and 2022 sessions | `200` |
+| Mirror, 2023 and later | `404` |
+
+An [issue in the FastF1 tracker](https://github.com/theOehrly/Fast-F1/issues/988)
+shows the same shape of failure: access now requires an F1 TV Access account,
+and some networks are refused before authentication runs.
+
+**Consequence:** the planned second block, Sao Paulo 2024 (Verstappen vs Norris),
+could not be produced and is not included. Abu Dhabi 2021 loads because its data
+was cached while authentication still worked. A second block is possible once
+sign-in is restored, either through a fixed FastF1 release or a different
+network.
+
 ## Limitations
 
 - **One lap is not a sample.** Every number here comes from a single lap of each
@@ -117,6 +143,8 @@ the apex and bought the straight.
   hairpin complex, so the exact metre of the pass is uncertain; what is certain
   is the corner. The time delta method does not work here at all (standing
   start, cold tyres, grid offset), which is why lap 1 uses position tracking.
+- **Only one race.** See *Data availability* above: 2023+ sessions are not
+  reachable from this network, so the second block is missing.
 - **Yas Marina passes close to itself.** A global nearest-point projection jumps
   between parallel pieces of track and produced 10 km "laps" in the first
   attempt. The fix was tracking the position in a moving window.
